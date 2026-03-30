@@ -4,7 +4,7 @@ import subprocess
 import os
 
 SERVER_URL = "http://127.0.0.1:5050"
-WORKER_ID = "cpu-node"
+WORKER_ID = "cpu-node2"
 USE_GPU = False  # set False if you want CPU worker
 
 def get_task():
@@ -46,9 +46,24 @@ while True:
     task = get_task()
 
     if task and "code" in task:
-        print(f"[AGENT] Running task {task['task_id']}")
+
+        # 🔥 GPU/CPU FILTERING
+        if task.get("requires_gpu", False) and not USE_GPU:
+            print("[AGENT] Skipping GPU task")
+            time.sleep(2)
+            continue
+
+        if not task.get("requires_gpu", False) and USE_GPU:
+            print("[AGENT] Skipping CPU task")
+            time.sleep(2)
+            continue
+
+        print(f"[AGENT] Running task {task['task_id']} on {WORKER_ID}")
+
         result = run_task(task["code"])
         send_result(task["task_id"], result)
+
         print(f"[AGENT] Done")
+
 
     time.sleep(3)
