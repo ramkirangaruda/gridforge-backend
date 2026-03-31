@@ -2,30 +2,30 @@ import requests
 import time
 import subprocess
 import os
+import psutil
 
 SERVER_URL = "http://127.0.0.1:5050"
 
-WORKER_ID = "gpu-node1"   # change for each worker
-USE_GPU = True            # True = GPU worker, False = CPU worker
+WORKER_ID = "cpu-node2"
+USE_GPU = False
 
 
 # -------------------------------
-# Get Task from Server
+# Get Task
 # -------------------------------
 def get_task():
     try:
-        response = requests.get(
+        res = requests.get(
             f"{SERVER_URL}/get-task",
             params={"requires_gpu": USE_GPU}
         )
-        return response.json()
-    except Exception as e:
-        print(f"[AGENT] Error fetching task: {e}")
+        return res.json()
+    except:
         return {}
 
 
 # -------------------------------
-# Run Task inside Docker
+# Run Task
 # -------------------------------
 def run_task(code):
     with open("task.py", "w") as f:
@@ -44,46 +44,76 @@ def run_task(code):
     ]
 
     try:
-        output = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
-        return output.decode()
+        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+        return out.decode(), True
     except subprocess.CalledProcessError as e:
-        return e.output.decode()
+        return e.output.decode(), False
 
 
 # -------------------------------
-# Send Result back to Server
+# Send Result
 # -------------------------------
-def send_result(task_id, output):
+def send_result(task_id, output, success):
+    requests.post(
+        f"{SERVER_URL}/result",
+        json={
+            "task_id": task_id,
+            "worker_id": WORKER_ID,
+            "output": output,
+            "success": success
+        }
+    )
+
+
+# -------------------------------
+# 🔥 Stats functions
+# -------------------------------
+def get_cpu_usage():
+    return psutil.cpu_percent(interval=0.5)
+
+
+def get_gpu_usage():
+    try:
+        output = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"]
+        )
+        return int(output.decode().strip())
+    except:
+        return 0
+
+
+def send_stats():
     try:
         requests.post(
-            f"{SERVER_URL}/result",
+            f"{SERVER_URL}/stats",
             json={
-                "task_id": task_id,
                 "worker_id": WORKER_ID,
-                "output": output
+                "cpu": get_cpu_usage(),
+                "gpu": get_gpu_usage()
             }
         )
-    except Exception as e:
-        print(f"[AGENT] Error sending result: {e}")
+    except:
+        pass
 
 
 # -------------------------------
 # Worker Loop
 # -------------------------------
 while True:
+    send_stats()
+
     task = get_task()
 
     if task and "code" in task:
+        print(f"[AGENT] Running {task['task_id']}")
 
-        print(f"[AGENT] Running task {task['task_id']} on {WORKER_ID}")
+        output, success = run_task(task["code"])
 
-        result = run_task(task["code"])
+        send_result(task["task_id"], output, success)
 
-        send_result(task["task_id"], result)
-
-        print(f"[AGENT] Completed task {task['task_id']}")
+        print(f"[AGENT] Done {task['task_id']}")
 
     else:
-        print("[AGENT] No task available")
+        print("[AGENT] No task")
 
     time.sleep(2)
