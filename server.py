@@ -1,10 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uuid
+import redis
+import json
 
 app = FastAPI()
 
-
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -13,10 +15,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-tasks = []
+# Redis connection
+r = redis.Redis(host="localhost", port=6379, decode_responses=True)
+
 combined_done = set()
 
 
+# -------------------------------
+# Helper: Push task to Redis queue
+# -------------------------------
+def push_task(task):
+    task_id = task["task_id"]
+
+    # Store task data
+    r.set(f"task:{task_id}", json.dumps(task))
+
+    # Push into correct queue
+    if task.get("requires_gpu", False):
+        r.rpush("gpu_queue", task_id)
+    else:
+        r.rpush("cpu_queue", task_id)
+
+
+# -------------------------------
+# Submit Task
+# -------------------------------
 @app.post("/submit-task")
 def submit_task(task: dict):
 
@@ -24,12 +47,11 @@ def submit_task(task: dict):
     requires_gpu = task.get("requires_gpu", False)
     split = task.get("split", False)
 
-    
+    # ---------------- SPLIT LOGIC ----------------
     if split and "for" in code and "range" in code:
 
         parent_id = str(uuid.uuid4())
 
-        # simple demo split (same code, different labels)
         part1 = {
             "task_id": str(uuid.uuid4()),
             "parent_id": parent_id,
@@ -50,8 +72,8 @@ def submit_task(task: dict):
             "output": ""
         }
 
-        tasks.append(part1)
-        tasks.append(part2)
+        push_task(part1)
+        push_task(part2)
 
         print(f"[SERVER] Split task {parent_id}")
 
@@ -60,7 +82,7 @@ def submit_task(task: dict):
             "message": "Task split into subtasks"
         }
 
-    
+    # ---------------- NORMAL TASK ----------------
     else:
         task_id = str(uuid.uuid4())
 
@@ -74,7 +96,7 @@ def submit_task(task: dict):
             "output": ""
         }
 
-        tasks.append(new_task)
+        push_task(new_task)
 
         print(f"[SERVER] Normal task {task_id}")
 
@@ -84,42 +106,75 @@ def submit_task(task: dict):
         }
 
 
-
+# -------------------------------
+# Get Task (Worker pulls)
+# -------------------------------
 @app.get("/get-task")
-def get_task():
-    for task in tasks:
-        if task["status"] == "pending":
-            task["status"] = "processing"
-            print(f"[SERVER] Assigning task: {task['task_id']}")
-            return task
-    return {}
+def get_task(requires_gpu: bool = None):
+
+    queue_name = "gpu_queue" if requires_gpu else "cpu_queue"
+
+    task_id = r.lpop(queue_name)
+
+    if not task_id:
+        return {}
+
+    task_data = json.loads(r.get(f"task:{task_id}"))
+
+    # mark processing
+    task_data["status"] = "processing"
+    r.set(f"task:{task_id}", json.dumps(task_data))
+
+    # track processing
+    r.rpush("processing_queue", task_id)
+
+    print(f"[SERVER] Assigned task {task_id}")
+
+    return task_data
 
 
-
+# -------------------------------
+# Submit Result
+# -------------------------------
 @app.post("/result")
 def submit_result(data: dict):
-    for task in tasks:
-        if task["task_id"] == data["task_id"]:
-            task["status"] = "completed"
-            task["output"] = data["output"]
-            task["worker_id"] = data["worker_id"]
 
-    print(f"[SERVER] Result received: {data['task_id']}")
+    task_id = data["task_id"]
+
+    task_data = json.loads(r.get(f"task:{task_id}"))
+
+    task_data["status"] = "completed"
+    task_data["output"] = data["output"]
+    task_data["worker_id"] = data["worker_id"]
+
+    r.set(f"task:{task_id}", json.dumps(task_data))
+
+    # remove from processing queue
+    r.lrem("processing_queue", 0, task_id)
+
+    print(f"[SERVER] Result received: {task_id}")
+
     return {"message": "stored"}
 
 
-
+# -------------------------------
+# Combine Split Tasks
+# -------------------------------
 def combine_split_tasks():
+
     combined_results = []
 
-    parent_ids = set(t["parent_id"] for t in tasks if t["parent_id"])
+    keys = r.keys("task:*")
+    all_tasks = [json.loads(r.get(k)) for k in keys]
+
+    parent_ids = set(t["parent_id"] for t in all_tasks if t["parent_id"])
 
     for pid in parent_ids:
 
         if pid in combined_done:
             continue
 
-        parts = [t for t in tasks if t["parent_id"] == pid]
+        parts = [t for t in all_tasks if t["parent_id"] == pid]
 
         if len(parts) == 2 and all(p["status"] == "completed" for p in parts):
 
@@ -139,7 +194,14 @@ def combine_split_tasks():
     return combined_results
 
 
-
+# -------------------------------
+# Get Results
+# -------------------------------
 @app.get("/results")
 def get_results():
-    return tasks + combine_split_tasks()
+
+    keys = r.keys("task:*")
+
+    all_tasks = [json.loads(r.get(k)) for k in keys]
+
+    return all_tasks + combine_split_tasks()
