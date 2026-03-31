@@ -28,7 +28,7 @@ def get_task():
 # Run Task
 # -------------------------------
 def run_task(code):
-    with open("task.py", "w") as f:
+    with open("task.py", "w", encoding="utf-8") as f:
         f.write(code)
 
     cmd = ["docker", "run", "--rm"]
