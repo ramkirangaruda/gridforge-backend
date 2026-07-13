@@ -1,0 +1,16 @@
+# Reverse proxy for the GridForge backend. Caddy gets HTTPS for free here -
+# it auto-obtains and renews a Let's Encrypt cert for $DOMAIN the first time
+# it starts, as long as DNS already points at this VM and ports 80/443 are
+# reachable (port 80 is required for the ACME HTTP-01 challenge, and stays
+# in use afterwards to redirect http -> https).
+{$DOMAIN} {
+	reverse_proxy backend:8000
+
+	# SSE (GET /api/v1/stream/tasks) is a long-lived response - make sure
+	# nothing here buffers or times it out early.
+	handle /api/v1/stream/* {
+		reverse_proxy backend:8000 {
+			flush_interval -1
+		}
+	}
+}

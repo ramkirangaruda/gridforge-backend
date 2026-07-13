@@ -1,0 +1,61 @@
+# Production overlay - merge onto the base file, don't run standalone:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d \
+#     redis gridforge-exec-image backend worker caddy
+#
+# (Naming services explicitly on `up` skips the base file's `frontend`
+# service entirely - see the deployment writeup for why the frontend isn't
+# meant to run on the VM in the recommended setup.)
+#
+# What this changes vs. local dev:
+#   - redis: no longer publishes 6379 to the host at all - only backend/
+#     worker can reach it, over the internal compose network.
+#   - backend: no longer publishes 8000 to the host either. Caddy is now
+#     the only public-facing container (80/443), and reaches backend by
+#     its service name on the same compose network.
+#   - FRONTEND_URL becomes the real frontend origin(s) for CORS, instead
+#     of localhost.
+#   - all services get bounded log rotation, since a long-running VM will
+#     otherwise let Docker's default json-file driver grow forever.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  redis:
+    ports: !reset []
+    logging: *default-logging
+
+  gridforge-exec-image:
+    logging: *default-logging
+
+  backend:
+    ports: !reset []
+    environment:
+      FRONTEND_URL: ${FRONTEND_URL:?Set FRONTEND_URL in .env to your frontend's origin(s), comma-separated}
+    logging: *default-logging
+
+  worker:
+    logging: *default-logging
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env to the hostname pointing at this VM, e.g. api.example.com}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+    logging: *default-logging
+
+volumes:
+  caddy_data:
+  caddy_config:
