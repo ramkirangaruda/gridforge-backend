@@ -4,10 +4,12 @@ import subprocess
 import os
 import psutil
 
-SERVER_URL = "http://127.0.0.1:5050"
+SERVER_URL = os.getenv("GRIDFORGE_SERVER_URL", "http://127.0.0.1:5050")
 
-WORKER_ID = "cpu-node2"
-USE_GPU = False
+WORKER_ID = os.getenv("GRIDFORGE_WORKER_ID", "gpu-node1")
+USE_GPU = os.getenv("GRIDFORGE_USE_GPU", "1").strip().lower() in {"1", "true", "yes", "y"}
+
+TASK_RUN_FILE = os.getenv("GRIDFORGE_TASK_RUN_FILE", "gridforge_task_run.py")
 
 
 # -------------------------------
@@ -28,7 +30,7 @@ def get_task():
 # Run Task
 # -------------------------------
 def run_task(code):
-    with open("task.py", "w", encoding="utf-8") as f:
+    with open(TASK_RUN_FILE, "w", encoding="utf-8") as f:
         f.write(code)
 
     cmd = ["docker", "run", "--rm"]
@@ -40,7 +42,7 @@ def run_task(code):
         "-v", f"{os.getcwd()}:/app",
         "-w", "/app",
         "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime",
-        "python", "task.py"
+        "python", TASK_RUN_FILE
     ]
 
     try:
@@ -99,21 +101,24 @@ def send_stats():
 # -------------------------------
 # Worker Loop
 # -------------------------------
-while True:
-    send_stats()
+try:
+    while True:
+        send_stats()
 
-    task = get_task()
+        task = get_task()
 
-    if task and "code" in task:
-        print(f"[AGENT] Running {task['task_id']}")
+        if task and "code" in task:
+            print(f"[AGENT] Running {task['task_id']}")
 
-        output, success = run_task(task["code"])
+            output, success = run_task(task["code"])
 
-        send_result(task["task_id"], output, success)
+            send_result(task["task_id"], output, success)
 
-        print(f"[AGENT] Done {task['task_id']}")
+            print(f"[AGENT] Done {task['task_id']}")
 
-    else:
-        print("[AGENT] No task")
+        else:
+            print("[AGENT] No task")
 
-    time.sleep(2)
+        time.sleep(2)
+except KeyboardInterrupt:
+    print("\n[AGENT] Stopped")

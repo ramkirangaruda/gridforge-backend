@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-multipart
+redis
+pydantic
+pydantic-settings
+email-validator
+docker
+requests
+python-dotenv

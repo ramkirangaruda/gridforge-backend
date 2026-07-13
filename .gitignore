@@ -1,0 +1,16 @@
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+
+# Backend runtime task file
+backend/gridforge_task_run.py
+backend/gridforge_task_run*.py
+
+# Frontend
+frontend/node_modules/
+frontend/build/
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
