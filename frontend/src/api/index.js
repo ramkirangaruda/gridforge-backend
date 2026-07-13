@@ -46,6 +46,14 @@ apiClient.interceptors.response.use(
 
 export const isAuthenticated = () => !!localStorage.getItem(TOKEN_STORAGE_KEY);
 
+// EventSource can't set an Authorization header, so the token has to
+// travel as a query param instead (see backend's get_current_user_sse).
+export const getTaskStreamUrl = () => {
+    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
+    if (!token) return null;
+    return `${API_URL}${API_V1_STR}/stream/tasks?token=${encodeURIComponent(token)}`;
+};
+
 export const logout = () => {
     localStorage.removeItem(TOKEN_STORAGE_KEY);
 };

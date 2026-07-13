@@ -1,14 +1,17 @@
+import asyncio
+import json
 import logging
 import uuid
 import shutil
 import os
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
+from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordRequestForm
 
 from backend.api.models import Task, TaskCreate, TaskUpdate, UserCreate, Token
 from backend.services import task_service, redis_service, user_service
 from backend.core.config import settings
-from backend.core.auth import get_current_user, verify_worker_key, create_access_token
+from backend.core.auth import get_current_user, get_current_user_sse, verify_worker_key, create_access_token
 # from backend.core.security import secure_filename # Replaced with standard library
 import re
 
@@ -159,4 +162,50 @@ def update_task_status(task_id: str, task_update: TaskUpdate):
         logger.warning(f"Worker failed to update non-existent task {task_id}")
         raise HTTPException(status_code=404, detail="Task not found")
     logger.info(f"Successfully updated task {task_id}")
+    redis_service.publish_task_update(task.owner, task.model_dump(mode="json"))
     return task
+
+
+@router.get("/stream/tasks")
+async def stream_tasks(request: Request, current_user: str = Depends(get_current_user_sse)):
+    """
+    Server-Sent Events stream of the authenticated user's task updates.
+    Replaces the frontend's old 2s-polling loop against /results: an
+    initial `snapshot` event carries the user's current tasks, then a
+    `task_update` event fires each time the worker posts a status change
+    for one of their tasks (pushed via Redis pub/sub - see
+    update_task_status above and redis_service.publish_task_update).
+    """
+    async def event_generator():
+        tasks = task_service.get_all_tasks(owner=current_user)
+        yield f"event: snapshot\ndata: {json.dumps([t.model_dump(mode='json') for t in tasks])}\n\n"
+
+        pubsub = await redis_service.subscribe_to_user_updates(current_user)
+        try:
+            while True:
+                if await request.is_disconnected():
+                    logger.info(f"SSE client for {current_user} disconnected.")
+                    break
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=15)
+                if message:
+                    yield f"event: task_update\ndata: {message['data']}\n\n"
+                else:
+                    # No update in the last 15s - send a comment line (not a
+                    # real event) purely to keep the connection alive
+                    # through intermediary proxies/load balancers that time
+                    # out idle HTTP connections.
+                    yield ": heartbeat\n\n"
+        finally:
+            await pubsub.unsubscribe()
+            await pubsub.aclose()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # Disable response buffering if this ever sits behind nginx.
+            "X-Accel-Buffering": "no",
+        },
+    )

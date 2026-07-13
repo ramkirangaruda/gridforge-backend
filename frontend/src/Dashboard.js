@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { getTasks } from "./api";
+import { getTaskStreamUrl } from "./api";
 import { motion, AnimatePresence } from "framer-motion";
 
 const statusColors = {
@@ -74,22 +74,53 @@ const TaskCard = ({ task }) => {
 function Dashboard({ tasks, setTasks }) {
     const [error, setError] = useState(null);
 
-    const fetchTasks = async () => {
-        try {
-            const res = await getTasks();
-            setTasks(res);
-            setError(null);
-        } catch (err) {
-            console.error(err);
-            setError("Failed to fetch tasks. Is the backend running?");
-        }
+    // Merges a single pushed task_update into the existing list, replacing
+    // the matching task in place (or prepending it if we somehow haven't
+    // seen it yet - e.g. a submit-project response raced the snapshot).
+    const applyTaskUpdate = (updatedTask) => {
+        setTasks((prevTasks) => {
+            const index = prevTasks.findIndex((t) => t.id === updatedTask.id);
+            if (index === -1) {
+                return [updatedTask, ...prevTasks];
+            }
+            const next = [...prevTasks];
+            next[index] = updatedTask;
+            return next;
+        });
     };
 
     useEffect(() => {
-        fetchTasks();
-        const interval = setInterval(fetchTasks, 2000);
-        return () => clearInterval(interval);
-    }, []);
+        const streamUrl = getTaskStreamUrl();
+        if (!streamUrl) {
+            setError("Not logged in.");
+            return;
+        }
+
+        const eventSource = new EventSource(streamUrl);
+
+        // Initial full list of the user's tasks, sent once when the
+        // connection opens - replaces the old first `getTasks()` poll.
+        eventSource.addEventListener("snapshot", (event) => {
+            setTasks(JSON.parse(event.data));
+            setError(null);
+        });
+
+        // One task's new state, pushed by the backend whenever the worker
+        // posts a status/log/exit-code update for it.
+        eventSource.addEventListener("task_update", (event) => {
+            applyTaskUpdate(JSON.parse(event.data));
+            setError(null);
+        });
+
+        eventSource.onerror = () => {
+            // EventSource retries the connection automatically; this just
+            // surfaces that we're currently disconnected.
+            console.error("Task stream connection error.");
+            setError("Live updates disconnected. Reconnecting...");
+        };
+
+        return () => eventSource.close();
+    }, [setTasks]);
 
     return (
         <div className="space-y-4">
