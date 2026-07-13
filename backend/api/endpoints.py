@@ -2,11 +2,13 @@ import logging
 import uuid
 import shutil
 import os
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi.security import OAuth2PasswordRequestForm
 
-from backend.api.models import Task, TaskCreate, TaskUpdate
-from backend.services import task_service, redis_service
+from backend.api.models import Task, TaskCreate, TaskUpdate, UserCreate, Token
+from backend.services import task_service, redis_service, user_service
 from backend.core.config import settings
+from backend.core.auth import get_current_user, verify_worker_key, create_access_token
 # from backend.core.security import secure_filename # Replaced with standard library
 import re
 
@@ -27,12 +29,42 @@ def secure_filename(filename: str) -> str:
     return filename
 
 
+@router.post("/auth/register", status_code=201)
+def register(user: UserCreate):
+    """
+    Registers a new user. No email verification/roles/etc - just enough
+    to demonstrate per-user access control.
+    """
+    try:
+        user_service.create_user(user.username, user.password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"message": "User registered successfully."}
+
+
+@router.post("/auth/login", response_model=Token)
+def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    """
+    Exchanges a username/password for a JWT access token. Send the token
+    back as `Authorization: Bearer <token>` on subsequent requests.
+    """
+    if not user_service.authenticate_user(form_data.username, form_data.password):
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token = create_access_token(form_data.username)
+    return Token(access_token=access_token)
+
+
 @router.post("/submit-project", response_model=Task)
-def submit_project(file: UploadFile = File(...)):
+def submit_project(file: UploadFile = File(...), current_user: str = Depends(get_current_user)):
     """
-    Accepts a ZIP file upload, stores it, and creates a task.
+    Accepts a ZIP file upload, stores it, and creates a task owned by the
+    authenticated user.
     """
-    logger.info("Received request to /submit-project")
+    logger.info(f"Received request to /submit-project from user {current_user}")
     # 1. File Validation
     if not file.filename:
         logger.error("File submission without a filename.")
@@ -48,7 +80,7 @@ def submit_project(file: UploadFile = File(...)):
     task_id = str(uuid.uuid4()) # Generate a secure, random task ID
     logger.info(f"Generated new task ID: {task_id}")
     try:
-        task = task_service.create_task(task_id=task_id, filename=safe_filename)
+        task = task_service.create_task(task_id=task_id, filename=safe_filename, owner=current_user)
         if not task:
             logger.error("Task service failed to create a task record.")
             raise HTTPException(status_code=500, detail="Failed to create task record.")
@@ -94,27 +126,32 @@ def submit_project(file: UploadFile = File(...)):
     return task
 
 @router.get("/task/{task_id}", response_model=Task)
-def get_task_status(task_id: str):
+def get_task_status(task_id: str, current_user: str = Depends(get_current_user)):
     """
-    Returns the status and details of a specific task.
+    Returns the status and details of a specific task, if it belongs to
+    the authenticated user.
     """
     task = task_service.get_task(task_id)
-    if not task:
-        logger.warning(f"Task {task_id} not found.")
+    # Same 404 whether the task doesn't exist or just isn't yours - avoids
+    # leaking other users' task IDs via a distinct "403 Forbidden" response.
+    if not task or task.owner != current_user:
+        logger.warning(f"Task {task_id} not found or not owned by {current_user}.")
         raise HTTPException(status_code=404, detail="Task not found")
     return task
 
 @router.get("/results", response_model=list[Task])
-def get_all_tasks():
+def get_all_tasks(current_user: str = Depends(get_current_user)):
     """
-    Returns all tasks, sorted by creation date.
+    Returns the authenticated user's tasks, sorted by creation date.
     """
-    return task_service.get_all_tasks()
+    return task_service.get_all_tasks(owner=current_user)
 
-@router.post("/task/{task_id}/update", response_model=Task)
+@router.post("/task/{task_id}/update", response_model=Task, dependencies=[Depends(verify_worker_key)])
 def update_task_status(task_id: str, task_update: TaskUpdate):
     """
-    Endpoint for the worker to update task status and results.
+    Endpoint for the worker to update task status and results. Authenticated
+    via a shared worker API key (X-Worker-Key header), not a user JWT - the
+    worker has no user identity of its own.
     """
     logger.info(f"Received update for task {task_id} with status {task_update.status}")
     task = task_service.update_task(task_id, task_update)

@@ -5,6 +5,8 @@ redis
 pydantic
 pydantic-settings
 sqlalchemy
+pyjwt
+bcrypt
 email-validator
 docker
 requests

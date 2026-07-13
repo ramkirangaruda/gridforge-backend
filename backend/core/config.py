@@ -41,6 +41,18 @@ class Settings(BaseSettings):
     # Frontend
     FRONTEND_URL: Optional[str] = None
 
+    # Auth
+    # No safe default on purpose - override in .env for any deployment that
+    # isn't purely local/throwaway, since anyone who knows this value can
+    # forge valid login tokens.
+    JWT_SECRET_KEY: str = "dev-only-insecure-secret-change-me"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_MINUTES: int = 60
+    # Shared secret the worker presents on POST /task/{id}/update, since the
+    # worker process has no per-user JWT of its own. Must match worker's
+    # WORKER_API_KEY.
+    WORKER_API_KEY: str = "dev-only-insecure-worker-key-change-me"
+
     @model_validator(mode="after")
     def _default_db_path(self) -> "Settings":
         if self.DB_PATH is None:

@@ -28,4 +28,7 @@ class Settings(BaseSettings):
     DOCKER_MEM_LIMIT: str = "512m"
     DOCKER_CPU_LIMIT: float = 1.0
 
+    # Auth - must match the backend's WORKER_API_KEY
+    WORKER_API_KEY: str = "dev-only-insecure-worker-key-change-me"
+
 settings = Settings()

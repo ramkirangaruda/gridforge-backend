@@ -25,6 +25,7 @@ class TaskUpdate(BaseModel):
 
 class Task(TaskBase):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    owner: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
@@ -34,3 +35,13 @@ class Task(TaskBase):
 
     class Config:
         from_attributes = True
+
+
+class UserCreate(BaseModel):
+    username: str = Field(min_length=3, max_length=64)
+    password: str = Field(min_length=8)
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"

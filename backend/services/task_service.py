@@ -18,12 +18,13 @@ logger = logging.getLogger(__name__)
 init_db()
 
 
-def create_task(task_id: str, filename: str) -> Task:
+def create_task(task_id: str, filename: str, owner: Optional[str] = None) -> Task:
     """Creates a new task and saves it."""
     new_task = TaskORM(
         id=task_id,
         filename=filename,
         status=TaskStatus.QUEUED.value,
+        owner=owner,
         created_at=datetime.utcnow(),
     )
     with SessionLocal() as session:
@@ -46,10 +47,15 @@ def get_task(task_id: str) -> Optional[Task]:
         return Task.model_validate(task) if task else None
 
 
-def get_all_tasks() -> List[Task]:
-    """Retrieves all tasks, newest first."""
+def get_all_tasks(owner: Optional[str] = None) -> List[Task]:
+    """Retrieves all tasks, newest first. Pass `owner` to restrict to a
+    single user's tasks - callers enforcing per-user access control
+    (see api/endpoints.py) should always pass it."""
     with SessionLocal() as session:
-        tasks = session.query(TaskORM).order_by(TaskORM.created_at.desc()).all()
+        query = session.query(TaskORM)
+        if owner is not None:
+            query = query.filter(TaskORM.owner == owner)
+        tasks = query.order_by(TaskORM.created_at.desc()).all()
         return [Task.model_validate(t) for t in tasks]
 
 

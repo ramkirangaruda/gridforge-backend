@@ -44,6 +44,10 @@ services:
       REDIS_QUEUE_NAME: gridforge_tasks
       UPLOADS_DIR: /app/uploads
       FRONTEND_URL: http://localhost:3000
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env}
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRE_MINUTES: 60
+      WORKER_API_KEY: ${WORKER_API_KEY:?Set WORKER_API_KEY in .env}
     volumes:
       - ${HOST_UPLOADS_DIR:?Set HOST_UPLOADS_DIR in .env to the absolute host path of ./uploads}:/app/uploads
     depends_on:
@@ -65,6 +69,7 @@ services:
       DOCKER_TIMEOUT: 300
       DOCKER_MEM_LIMIT: 512m
       DOCKER_CPU_LIMIT: 1.0
+      WORKER_API_KEY: ${WORKER_API_KEY:?Set WORKER_API_KEY in .env}
       # MUST equal the mount source below verbatim (not the backend's
       # in-container /app/uploads). docker_runner.py passes this path
       # straight to the Docker SDK as a bind-mount source for the

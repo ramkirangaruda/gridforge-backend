@@ -29,7 +29,12 @@ def update_task_status(
     logger.info(f"Attempting to update task {task_id} with payload: {payload}")
 
     try:
-        response = requests.post(url, json=payload, timeout=15)
+        response = requests.post(
+            url,
+            json=payload,
+            headers={"X-Worker-Key": settings.WORKER_API_KEY},
+            timeout=15,
+        )
         response.raise_for_status()
         logger.info(f"Successfully updated task {task_id} to status {status}")
         return response.json()
