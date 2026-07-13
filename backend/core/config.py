@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     # (env var or .env) to still override it independently.
     DB_PATH: Optional[Path] = None
 
+    # SQLAlchemy connection string. Left unset by default so the validator
+    # below derives a SQLite URL from DB_PATH. Override with a Postgres (or
+    # other) URL if this ever needs to scale past a single SQLite file -
+    # nothing else in the app needs to change, since task_service.py only
+    # talks to SQLAlchemy's engine/session API.
+    DATABASE_URL: Optional[str] = None
+
     # Worker
     MAX_EXECUTION_TIME: int = 300 # in seconds
 
@@ -37,7 +44,11 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _default_db_path(self) -> "Settings":
         if self.DB_PATH is None:
-            self.DB_PATH = self.UPLOADS_DIR / "tasks_db.json"
+            self.DB_PATH = self.UPLOADS_DIR / "tasks.db"
+        if self.DATABASE_URL is None:
+            # sqlite:///<absolute-path>, forward slashes even on Windows -
+            # SQLAlchemy's SQLite dialect expects POSIX-style separators.
+            self.DATABASE_URL = f"sqlite:///{self.DB_PATH.resolve().as_posix()}"
         return self
 
 settings = Settings()

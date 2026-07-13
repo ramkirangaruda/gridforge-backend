@@ -4,6 +4,7 @@ python-multipart
 redis
 pydantic
 pydantic-settings
+sqlalchemy
 email-validator
 docker
 requests
