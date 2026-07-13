@@ -1,0 +1,21 @@
+# Worker PROCESS image (the Redis-polling, Docker-spawning daemon).
+#
+# NOT to be confused with worker/Dockerfile, which builds the
+# `gridforge-exec:latest` SANDBOX image that this process spawns
+# per-task via the Docker SDK - that one never runs as a long-lived
+# service, see docker-compose.yml's `gridforge-exec-image` service.
+#
+# Build context is the REPO ROOT, same reasoning as backend/Dockerfile
+# (requirements.txt lives there). worker/main.py uses *unqualified*
+# imports (`from config import settings`), so it must run with
+# worker/ itself as the working directory, not as a `worker.*` package.
+FROM python:3.11-slim
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY worker/ /app/worker/
+WORKDIR /app/worker
+
+CMD ["python", "main.py"]

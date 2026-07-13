@@ -1,0 +1,111 @@
+# GridForge local stack: redis -> backend -> worker (spawns gridforge-exec
+# sandbox containers) -> frontend.
+#
+# Requires a .env file at the repo root (see .env.example) - in particular
+# HOST_UPLOADS_DIR, which MUST be the absolute path of ./uploads on the
+# HOST machine. See the comment on the worker service below for why.
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # Builds and tags the gridforge-exec:latest sandbox image from
+  # worker/Dockerfile. This service never stays running - `entrypoint: true`
+  # makes the container exit 0 immediately after the image is built/tagged,
+  # and `worker` waits on it via `condition: service_completed_successfully`.
+  # This is the "build it as part of compose" answer to the chicken-and-egg
+  # problem: worker refuses to run tasks until gridforge-exec:latest exists.
+  gridforge-exec-image:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    image: gridforge-exec:latest
+    entrypoint: ["true"]
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      API_PORT: 8000
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      REDIS_QUEUE_NAME: gridforge_tasks
+      UPLOADS_DIR: /app/uploads
+      FRONTEND_URL: http://localhost:3000
+    volumes:
+      - ${HOST_UPLOADS_DIR:?Set HOST_UPLOADS_DIR in .env to the absolute host path of ./uploads}:/app/uploads
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile.worker
+    environment:
+      API_BASE_URL: http://backend:8000/api/v1
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      REDIS_QUEUE_NAME: gridforge_tasks
+      DOCKER_IMAGE: gridforge-exec:latest
+      DOCKER_TIMEOUT: 300
+      DOCKER_MEM_LIMIT: 512m
+      DOCKER_CPU_LIMIT: 1.0
+      # MUST equal the mount source below verbatim (not the backend's
+      # in-container /app/uploads). docker_runner.py passes this path
+      # straight to the Docker SDK as a bind-mount source for the
+      # sandbox container it spawns. Since that call goes over the
+      # host Docker socket, the HOST daemon resolves the path - it
+      # knows nothing about this container's own filesystem. Mounting
+      # the host uploads dir at its own identical path inside the
+      # worker container ("path mirroring") keeps both sides in sync
+      # without needing to patch worker source to translate paths.
+      WORKSPACES_DIR: ${HOST_UPLOADS_DIR:?Set HOST_UPLOADS_DIR in .env to the absolute host path of ./uploads}
+    volumes:
+      - ${HOST_UPLOADS_DIR:?Set HOST_UPLOADS_DIR in .env to the absolute host path of ./uploads}:${HOST_UPLOADS_DIR:?Set HOST_UPLOADS_DIR in .env to the absolute host path of ./uploads}
+      # Grants the worker control of the HOST Docker daemon so it can
+      # spawn/inspect/remove sandbox containers as siblings (not
+      # children) of itself. See the "Docker socket" note in the PR
+      # description / README for the security tradeoff and a hardened
+      # alternative (routing through docker-socket-proxy instead of
+      # mounting the raw socket).
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+      gridforge-exec-image:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      # This is read by code running in the user's BROWSER, not inside
+      # this container - it must be a URL the host machine can reach
+      # (the published port below), never the internal service name
+      # `backend` (that's only resolvable on the compose network).
+      REACT_APP_API_URL: http://localhost:8000
+      WDS_SOCKET_PORT: 0
+    depends_on:
+      backend:
+        condition: service_started

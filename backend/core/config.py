@@ -1,7 +1,5 @@
-from pydantic_settings import BaseSettings
-from pathlib import Path
-
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import model_validator
 from pathlib import Path
 from typing import Optional
 
@@ -13,7 +11,7 @@ class Settings(BaseSettings):
     )
     PROJECT_NAME: str = "GridForge"
     API_V1_STR: str = "/api/v1"
-    
+
     # API Port
     API_PORT: int = 8000
 
@@ -25,14 +23,21 @@ class Settings(BaseSettings):
 
     # Storage
     UPLOADS_DIR: Path = Path.cwd() / "uploads"
-    DB_PATH: Path = UPLOADS_DIR / "tasks_db.json"
-    
+    # Left unset by default so the validator below can derive it from the
+    # actual (possibly env-overridden) UPLOADS_DIR. Set DB_PATH explicitly
+    # (env var or .env) to still override it independently.
+    DB_PATH: Optional[Path] = None
+
     # Worker
     MAX_EXECUTION_TIME: int = 300 # in seconds
 
     # Frontend
     FRONTEND_URL: Optional[str] = None
 
-settings = Settings()
+    @model_validator(mode="after")
+    def _default_db_path(self) -> "Settings":
+        if self.DB_PATH is None:
+            self.DB_PATH = self.UPLOADS_DIR / "tasks_db.json"
+        return self
 
 settings = Settings()
