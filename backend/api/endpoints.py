@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import uuid
@@ -8,7 +7,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordRequestForm
 
-from backend.api.models import Task, TaskCreate, TaskUpdate, UserCreate, Token
+from backend.api.models import Task, TaskUpdate, UserCreate, Token
 from backend.services import task_service, redis_service, user_service
 from backend.core.config import settings
 from backend.core.auth import get_current_user, get_current_user_sse, verify_worker_key, create_access_token

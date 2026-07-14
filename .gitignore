@@ -3,6 +3,8 @@
 # Python
 __pycache__/
 *.pyc
+.ruff_cache/
+.pytest_cache/
 
 # Backend runtime task file
 backend/gridforge_task_run.py

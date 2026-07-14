@@ -1,4 +1,3 @@
-import re
 from werkzeug.utils import secure_filename as werkzeug_secure_filename
 
 def secure_filename(filename: str) -> str:

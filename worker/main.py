@@ -2,7 +2,6 @@ import time
 import zipfile
 import shutil
 import logging
-from pathlib import Path
 
 from config import settings
 from docker_runner import run_in_container
