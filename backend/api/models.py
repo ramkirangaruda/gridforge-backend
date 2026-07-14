@@ -40,7 +40,13 @@ class Task(TaskBase):
 
 class UserCreate(BaseModel):
     username: str = Field(min_length=3, max_length=64)
-    password: str = Field(min_length=8)
+    # bcrypt (backend/core/auth.py) silently truncates anything past 72
+    # bytes, so without a cap here two different long passwords sharing a
+    # 72-byte prefix would hash identically - and hashing an
+    # attacker-supplied megabyte-long string is a cheap way to burn CPU on
+    # every request. 72 matches bcrypt's own limit exactly, not a random
+    # round number.
+    password: str = Field(min_length=8, max_length=72)
 
 
 class Token(BaseModel):
