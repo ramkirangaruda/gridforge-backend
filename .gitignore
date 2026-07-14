@@ -1,5 +1,10 @@
 .venv/
 
+# Secrets - never commit real env files, only .env.example templates
+.env
+.env.local
+.env.*.local
+
 # Python
 __pycache__/
 *.pyc
@@ -10,16 +15,16 @@ __pycache__/
 backend/gridforge_task_run.py
 backend/gridforge_task_run*.py
 
-# SQLite task DB (and WAL-mode sidecar files)
-uploads/tasks.db
-uploads/tasks.db-wal
-uploads/tasks.db-shm
-uploads/tasks_db.json
-uploads/tasks_db.json.bak
+# Logs - anywhere in the repo, not just one path
+*.log
 
-# Frontend
-frontend/node_modules/
-frontend/build/
-frontend/.env
-frontend/.env.local
-frontend/.env.*.local
+# Uploaded projects and the SQLite task DB - anywhere under uploads/, not
+# just the specific filenames seen so far. .gitkeep is the one file in
+# here that's actually meant to be tracked, to keep the empty dir in git.
+uploads/*
+!uploads/.gitkeep
+
+# node_modules - bare pattern (no leading path) matches at any depth, so
+# this covers frontend/node_modules/ AND a stray root-level one alike.
+node_modules/
+build/
