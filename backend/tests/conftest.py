@@ -14,12 +14,12 @@ os.environ.setdefault("WORKER_API_KEY", "test-worker-key-for-ci-only")
 os.environ.setdefault("REDIS_HOST", "localhost")
 os.environ.setdefault("REDIS_PORT", "6379")
 
-import pytest
-from fastapi.testclient import TestClient
+import pytest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
-from backend.main import app
-from backend.db.database import SessionLocal
-from backend.db.models import TaskORM, UserORM
+from backend.main import app  # noqa: E402
+from backend.db.database import SessionLocal  # noqa: E402
+from backend.db.models import TaskORM, UserORM  # noqa: E402
 
 
 @pytest.fixture()

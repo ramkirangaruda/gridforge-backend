@@ -3,6 +3,7 @@ import shutil
 from datetime import datetime
 from typing import List, Optional
 
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 
 from backend.api.models import Task, TaskStatus, TaskUpdate
@@ -18,13 +19,19 @@ logger = logging.getLogger(__name__)
 init_db()
 
 
-def create_task(task_id: str, filename: str, owner: Optional[str] = None) -> Task:
+def create_task(
+    task_id: str,
+    filename: str,
+    owner: Optional[str] = None,
+    file_size: Optional[int] = None,
+) -> Task:
     """Creates a new task and saves it."""
     new_task = TaskORM(
         id=task_id,
         filename=filename,
         status=TaskStatus.QUEUED.value,
         owner=owner,
+        file_size=file_size,
         created_at=datetime.utcnow(),
     )
     with SessionLocal() as session:
@@ -57,6 +64,19 @@ def get_all_tasks(owner: Optional[str] = None) -> List[Task]:
             query = query.filter(TaskORM.owner == owner)
         tasks = query.order_by(TaskORM.created_at.desc()).all()
         return [Task.model_validate(t) for t in tasks]
+
+
+def get_user_storage_usage(owner: str) -> int:
+    """Total bytes across all of a user's existing tasks' uploaded zips -
+    backs the per-user quota check in api/endpoints.py. Rows predating the
+    file_size column (nullable) contribute 0, not NULL, to the sum."""
+    with SessionLocal() as session:
+        total = (
+            session.query(func.coalesce(func.sum(TaskORM.file_size), 0))
+            .filter(TaskORM.owner == owner)
+            .scalar()
+        )
+        return int(total or 0)
 
 
 def update_task(task_id: str, task_update: TaskUpdate) -> Optional[Task]:

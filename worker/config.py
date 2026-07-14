@@ -31,4 +31,12 @@ class Settings(BaseSettings):
     # Auth - must match the backend's WORKER_API_KEY
     WORKER_API_KEY: str = "dev-only-insecure-worker-key-change-me"
 
+    # Zip bomb guard: refuse to extract if the sum of ZipInfo.file_size
+    # across all entries (i.e. the archive's *declared* uncompressed size)
+    # exceeds this, regardless of how small the zip itself is on disk.
+    # Mirrors the backend's MAX_UPLOAD_SIZE_BYTES in spirit, not value -
+    # a 100MB compressed upload could still legitimately decompress a bit
+    # larger, so this is intentionally its own separate cap.
+    MAX_UNCOMPRESSED_ZIP_SIZE: int = 100 * 1024 * 1024  # 100MB
+
 settings = Settings()

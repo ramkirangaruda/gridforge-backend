@@ -14,6 +14,11 @@ class TaskORM(Base):
     # Nullable so tasks created before auth was added don't break existing
     # rows; anything created going forward always has one set at creation.
     owner = Column(String, nullable=True, index=True)
+    # Size in bytes of the uploaded project.zip, recorded at submit time -
+    # backs the per-user storage quota in task_service.get_user_storage_usage().
+    # Nullable for the same reason `owner` is: rows created before this
+    # column existed.
+    file_size = Column(Integer, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)

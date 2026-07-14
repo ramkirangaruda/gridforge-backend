@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # Worker
     MAX_EXECUTION_TIME: int = 300 # in seconds
 
+    # Uploads / quota
+    MAX_UPLOAD_SIZE_BYTES: int = 100 * 1024 * 1024   # 100MB per zip
+    MAX_USER_STORAGE_BYTES: int = 500 * 1024 * 1024  # 500MB total per user
+
     # Frontend
     FRONTEND_URL: Optional[str] = None
 

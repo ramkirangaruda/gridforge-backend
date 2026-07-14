@@ -75,14 +75,46 @@ def submit_project(file: UploadFile = File(...), current_user: str = Depends(get
         logger.error(f"Invalid file type received: {file.filename}")
         raise HTTPException(status_code=400, detail="Invalid file type. Only .zip files are accepted.")
 
+    # file.size reflects what Starlette actually received - unlike the
+    # Content-Length header (already checked earlier by
+    # MaxBodySizeMiddleware, see main.py), it can't be spoofed by the
+    # client, so this is the authoritative check even though by this point
+    # the body has already been read. Checked before creating any task
+    # record or writing anything to uploads/, so an oversized upload leaves
+    # no partial state behind.
+    if file.size is not None and file.size > settings.MAX_UPLOAD_SIZE_BYTES:
+        logger.warning(f"Rejected upload from {current_user}: {file.size} bytes exceeds the {settings.MAX_UPLOAD_SIZE_BYTES} byte limit.")
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds the maximum allowed size of {settings.MAX_UPLOAD_SIZE_BYTES // (1024 * 1024)}MB.",
+        )
+
+    # 1b. Per-user storage quota
+    current_usage = task_service.get_user_storage_usage(current_user)
+    if file.size is not None and current_usage + file.size > settings.MAX_USER_STORAGE_BYTES:
+        logger.warning(
+            f"Rejected upload from {current_user}: {current_usage} + {file.size} bytes "
+            f"would exceed the {settings.MAX_USER_STORAGE_BYTES} byte per-user quota."
+        )
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"This upload would exceed your storage quota "
+                f"({settings.MAX_USER_STORAGE_BYTES // (1024 * 1024)}MB total). "
+                f"Delete some previous tasks and try again."
+            ),
+        )
+
     safe_filename = secure_filename(file.filename)
     logger.info(f"Sanitized filename: {safe_filename}")
-    
+
     # 2. Create Task and Storage Directory
     task_id = str(uuid.uuid4()) # Generate a secure, random task ID
     logger.info(f"Generated new task ID: {task_id}")
     try:
-        task = task_service.create_task(task_id=task_id, filename=safe_filename, owner=current_user)
+        task = task_service.create_task(
+            task_id=task_id, filename=safe_filename, owner=current_user, file_size=file.size
+        )
         if not task:
             logger.error("Task service failed to create a task record.")
             raise HTTPException(status_code=500, detail="Failed to create task record.")

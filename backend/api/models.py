@@ -26,6 +26,7 @@ class TaskUpdate(BaseModel):
 class Task(TaskBase):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     owner: Optional[str] = None
+    file_size: Optional[int] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None

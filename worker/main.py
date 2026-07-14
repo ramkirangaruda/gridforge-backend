@@ -54,11 +54,23 @@ def process_task(task_id: str):
             raise FileNotFoundError("Project ZIP file not found.")
             
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            # Secure extraction
+            # Secure extraction: reject path traversal, and reject zip
+            # bombs by summing each entry's *declared* uncompressed size
+            # before extracting anything - a small, highly-compressed zip
+            # can still decompress to gigabytes, so the compressed size on
+            # disk (already capped by the backend, see MAX_UPLOAD_SIZE_BYTES
+            # in api/endpoints.py) tells us nothing about that risk.
+            total_uncompressed_size = 0
             for member in zip_ref.infolist():
-                # Prevent Zip Slip and other malicious paths
                 if ".." in member.filename or member.filename.startswith('/'):
                     raise ValueError("Malicious ZIP file detected (invalid member).")
+                total_uncompressed_size += member.file_size
+                if total_uncompressed_size > settings.MAX_UNCOMPRESSED_ZIP_SIZE:
+                    raise ValueError(
+                        f"ZIP archive's uncompressed size exceeds the "
+                        f"{settings.MAX_UNCOMPRESSED_ZIP_SIZE} byte limit "
+                        f"(likely a zip bomb)."
+                    )
             zip_ref.extractall(extract_path)
         logger.info(f"Successfully extracted project for task {task_id} to {extract_path}")
     except (zipfile.BadZipFile, ValueError, FileNotFoundError) as e:
