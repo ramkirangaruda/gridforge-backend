@@ -35,6 +35,11 @@ services:
     ports: !reset []
     environment:
       FRONTEND_URL: ${FRONTEND_URL:?Set FRONTEND_URL in .env to your frontend's origin(s), comma-separated}
+      # Without this, backend/main.py's startup check is inert - it only
+      # refuses to boot without FRONTEND_URL when ENVIRONMENT is anything
+      # other than "development" (the default). This is what actually
+      # turns that check on for a real deployment.
+      ENVIRONMENT: production
     logging: *default-logging
 
   worker:

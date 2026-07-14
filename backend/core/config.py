@@ -12,6 +12,15 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "GridForge"
     API_V1_STR: str = "/api/v1"
 
+    # Gates the FRONTEND_URL/CORS startup check in main.py. Only the exact
+    # value "development" (the default) is treated as safe to run without
+    # FRONTEND_URL set; anything else - "production", "staging", a typo
+    # like "prod" - is treated as requiring it. That's deliberately the
+    # opposite of an allow-list: forgetting to set this, or misspelling it,
+    # should fail closed (refuse to start with wildcard CORS) rather than
+    # fail open (silently allow it).
+    ENVIRONMENT: str = "development"
+
     # API Port
     API_PORT: int = 8000
 

@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from backend.main import app  # noqa: E402
 from backend.db.database import SessionLocal  # noqa: E402
 from backend.db.models import TaskORM, UserORM  # noqa: E402
+from backend.core.rate_limit import limiter  # noqa: E402
 
 
 @pytest.fixture()
@@ -37,3 +38,16 @@ def _clean_db():
         session.query(TaskORM).delete()
         session.query(UserORM).delete()
         session.commit()
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limits():
+    """The slowapi Limiter's counters live in an in-memory store on the
+    single shared `limiter` object (registered once on app.state at import
+    time), not per-TestClient - without this, tests that call
+    /auth/register or /auth/login more than a couple of times start
+    tripping the 5/minute limit purely from earlier tests' calls sharing
+    the same bucket (TestClient always presents as the same "testclient"
+    pseudo-IP), not from anything the test itself is doing wrong."""
+    limiter.reset()
+    yield

@@ -2,17 +2,26 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from backend.api.endpoints import router as api_router
 from backend.core.config import settings
 from backend.core.logging import setup_logging
+from backend.core.rate_limit import limiter
 
 # Set up logging
 setup_logging()
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title=settings.PROJECT_NAME)
+
+# Registers the limiter so @limiter.limit(...) decorators in endpoints.py
+# work, and translates a hit limit into a 429 response instead of an
+# unhandled RateLimitExceeded exception.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 class MaxBodySizeMiddleware(BaseHTTPMiddleware):
@@ -55,16 +64,24 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
 app.add_middleware(MaxBodySizeMiddleware, max_bytes=settings.MAX_UPLOAD_SIZE_BYTES)
 
 # FRONTEND_URL may be a single origin or a comma-separated list (e.g. a
-# custom domain plus a Vercel preview URL). Falls back to "*" only when
-# unset, which is fine for local dev but must never happen in production -
-# wildcard CORS on an API that accepts a bearer token is a real hole, even
-# though the token isn't cookie-based (no CSRF risk), because it makes
-# token-leaking XSS on *any* site easier to exploit against this API.
-if settings.FRONTEND_URL:
-    origins = [origin.strip() for origin in settings.FRONTEND_URL.split(",")]
-else:
-    logger.warning("FRONTEND_URL not set - falling back to CORS allow_origins=['*']. Set it in production.")
-    origins = ["*"]
+# custom domain plus a Vercel preview URL). Wildcard CORS on an API that
+# accepts a bearer token is a real hole - even though the token isn't
+# cookie-based (no CSRF risk), it makes token-leaking XSS on *any* site
+# easier to exploit against this API. Outside of ENVIRONMENT=development,
+# refuse to start rather than silently falling back to "*": a missing env
+# var should be a loud deploy failure, not a quiet security regression
+# that only shows up later as "huh, why is this API open to every origin."
+if not settings.FRONTEND_URL:
+    if settings.ENVIRONMENT != "development":
+        raise RuntimeError(
+            "FRONTEND_URL is not set and ENVIRONMENT is not 'development' "
+            f"(got {settings.ENVIRONMENT!r}). Refusing to start with wildcard "
+            "CORS on an API that accepts a bearer token - set FRONTEND_URL in "
+            "the environment/.env to your frontend's origin(s), comma-separated."
+        )
+    logger.warning("FRONTEND_URL not set - falling back to CORS allow_origins=['*']. This is only allowed because ENVIRONMENT=development.")
+
+origins = [origin.strip() for origin in settings.FRONTEND_URL.split(",")] if settings.FRONTEND_URL else ["*"]
 
 app.add_middleware(
     CORSMiddleware,

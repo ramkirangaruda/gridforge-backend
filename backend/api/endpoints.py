@@ -11,6 +11,7 @@ from backend.api.models import Task, TaskUpdate, UserCreate, Token
 from backend.services import task_service, redis_service, user_service
 from backend.core.config import settings
 from backend.core.auth import get_current_user, get_current_user_sse, verify_worker_key, create_access_token
+from backend.core.rate_limit import limiter
 # from backend.core.security import secure_filename # Replaced with standard library
 import re
 
@@ -32,10 +33,18 @@ def secure_filename(filename: str) -> str:
 
 
 @router.post("/auth/register", status_code=201)
-def register(user: UserCreate):
+@limiter.limit("5/minute")
+def register(request: Request, user: UserCreate):
     """
     Registers a new user. No email verification/roles/etc - just enough
     to demonstrate per-user access control.
+
+    Rate-limited to 5/minute per IP: generous enough that nobody fumbling
+    a signup form hits it, tight enough to make scripted registration spam
+    (filling the users table, or probing for taken usernames) impractical.
+    This is a demo-appropriate number, not a production-tuned one - a
+    real deployment facing actual abuse would likely want this lower, plus
+    a CAPTCHA or email verification step, neither of which is in scope here.
     """
     try:
         user_service.create_user(user.username, user.password)
@@ -45,10 +54,18 @@ def register(user: UserCreate):
 
 
 @router.post("/auth/login", response_model=Token)
-def login(form_data: OAuth2PasswordRequestForm = Depends()):
+@limiter.limit("5/minute")
+def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
     """
     Exchanges a username/password for a JWT access token. Send the token
     back as `Authorization: Bearer <token>` on subsequent requests.
+
+    Rate-limited to 5/minute per IP - the main goal is blunting online
+    password-guessing against a single account. Per-IP is what's asked
+    for here and is enough to stop a naive brute force from one machine,
+    but it does NOT stop a distributed attack spreading guesses across
+    many IPs at one username; a stricter per-username lockout would be
+    the next layer to add if that threat model matters for this deployment.
     """
     if not user_service.authenticate_user(form_data.username, form_data.password):
         raise HTTPException(
