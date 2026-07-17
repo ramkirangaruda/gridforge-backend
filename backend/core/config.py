@@ -1,9 +1,11 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 from pydantic import model_validator
 from pathlib import Path
 from typing import Optional
 
-class Settings(BaseSettings):
+from shared.config import SharedSettings
+
+class Settings(SharedSettings):
     model_config = SettingsConfigDict(
         case_sensitive=True,
         env_file=".env",
@@ -24,11 +26,8 @@ class Settings(BaseSettings):
     # API Port
     API_PORT: int = 8000
 
-    # Redis
-    REDIS_HOST: str = "localhost"
-    REDIS_PORT: int = 6379
-    REDIS_DB: int = 0
-    REDIS_QUEUE_NAME: str = "gridforge_tasks"
+    # REDIS_HOST/PORT/DB/QUEUE_NAME and WORKER_API_KEY come from
+    # SharedSettings (see shared/config.py) - not redeclared here.
 
     # Storage
     UPLOADS_DIR: Path = Path.cwd() / "uploads"
@@ -61,10 +60,6 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = "dev-only-insecure-secret-change-me"
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 60
-    # Shared secret the worker presents on POST /task/{id}/update, since the
-    # worker process has no per-user JWT of its own. Must match worker's
-    # WORKER_API_KEY.
-    WORKER_API_KEY: str = "dev-only-insecure-worker-key-change-me"
 
     @model_validator(mode="after")
     def _default_db_path(self) -> "Settings":

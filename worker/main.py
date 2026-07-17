@@ -1,7 +1,10 @@
+import sys
 import time
 import zipfile
 import shutil
 import logging
+
+import requests
 
 from config import settings
 from docker_runner import run_in_container
@@ -12,6 +15,53 @@ from services.redis_service import get_task_from_queue, get_redis_client
 # Initialize logging
 setup_logging()
 logger = logging.getLogger(__name__)
+
+
+def verify_worker_key_matches_backend() -> bool:
+    """Confirms WORKER_API_KEY is actually accepted by the backend before
+    the main loop starts pulling tasks.
+
+    Every /task/{id}/update call needs this key (see verify_worker_key in
+    backend/core/auth.py), but api_client.py logs and swallows HTTP
+    errors rather than raising - so on its own, a mismatched key
+    wouldn't surface as anything louder than a per-call error buried in
+    the worker's log file, and only *after* a task has already been
+    popped off the (destructive) Redis queue, run for real, and had its
+    result thrown away because the backend could never be told about it.
+    Checking once here, before any task is ever pulled, avoids wasting
+    real compute on a task doomed to have its result discarded.
+
+    Returns True once verified. Returns False (caller should retry) if
+    the backend isn't reachable yet - that's expected during startup and
+    not treated as fatal. Exits the process immediately on a definitive
+    403, since that's a real misconfiguration retrying won't fix.
+    """
+    url = f"{settings.API_BASE_URL}/worker/ping"
+    try:
+        response = requests.get(
+            url, headers={"X-Worker-Key": settings.WORKER_API_KEY}, timeout=10
+        )
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"Could not reach backend at {url} to verify WORKER_API_KEY yet: {e}")
+        return False
+
+    if response.status_code == 200:
+        logger.info("WORKER_API_KEY verified against the backend.")
+        return True
+
+    if response.status_code == 403:
+        logger.critical(
+            "WORKER_API_KEY does not match the backend's configured key. "
+            "Every task update this worker sends would be silently rejected "
+            "until this is fixed, so refusing to start rather than waste "
+            "compute on tasks whose results could never be reported. Set "
+            "WORKER_API_KEY to the same value in both the backend's and the "
+            "worker's environment."
+        )
+        sys.exit(1)
+
+    logger.warning(f"Unexpected response ({response.status_code}) verifying WORKER_API_KEY against the backend; will retry.")
+    return False
 
 def process_task(task_id: str):
     """
@@ -122,6 +172,14 @@ def main():
         except Exception as e:
             logger.error(f"Could not connect to Redis on startup. Retrying in 10 seconds... Error: {e}")
             time.sleep(10)
+
+    # Loop to ensure the backend is reachable AND actually accepts this
+    # worker's WORKER_API_KEY before pulling any tasks. Exits the process
+    # outright on a confirmed key mismatch (see the function docstring);
+    # only retries for "backend not reachable yet", which is normal
+    # during startup ordering.
+    while not verify_worker_key_matches_backend():
+        time.sleep(10)
 
     logger.info(f"Worker waiting for tasks on queue '{settings.REDIS_QUEUE_NAME}'...")
     while True:

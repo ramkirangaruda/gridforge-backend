@@ -5,6 +5,21 @@
 # HOST_UPLOADS_DIR, which MUST be the absolute path of ./uploads on the
 # HOST machine. See the comment on the worker service below for why.
 
+# Fields backend and worker MUST agree on for tasks to flow at all -
+# defined once here and merged into both services' `environment:` below
+# via the `<<: *shared-env` YAML anchor, so this file itself can't
+# specify two different literal values for them (the risk a plain
+# copy-pasted block per service would carry). This is the compose-layer
+# half of the fix; shared/config.py is the equivalent at the Python
+# source level, and worker/main.py's startup ping to the backend is the
+# runtime check that catches drift even when neither of those apply.
+x-shared-env: &shared-env
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  REDIS_DB: 0
+  REDIS_QUEUE_NAME: gridforge_tasks
+  WORKER_API_KEY: ${WORKER_API_KEY:?Set WORKER_API_KEY in .env}
+
 services:
   redis:
     image: redis:7-alpine
@@ -37,17 +52,13 @@ services:
     ports:
       - "8000:8000"
     environment:
+      <<: *shared-env
       API_PORT: 8000
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_DB: 0
-      REDIS_QUEUE_NAME: gridforge_tasks
       UPLOADS_DIR: /app/uploads
       FRONTEND_URL: http://localhost:3000
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env}
       JWT_ALGORITHM: HS256
       JWT_EXPIRE_MINUTES: 60
-      WORKER_API_KEY: ${WORKER_API_KEY:?Set WORKER_API_KEY in .env}
     volumes:
       - ${HOST_UPLOADS_DIR:?Set HOST_UPLOADS_DIR in .env to the absolute host path of ./uploads}:/app/uploads
     depends_on:
@@ -60,16 +71,12 @@ services:
       context: .
       dockerfile: worker/Dockerfile.worker
     environment:
+      <<: *shared-env
       API_BASE_URL: http://backend:8000/api/v1
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_DB: 0
-      REDIS_QUEUE_NAME: gridforge_tasks
       DOCKER_IMAGE: gridforge-exec:latest
       DOCKER_TIMEOUT: 300
       DOCKER_MEM_LIMIT: 512m
       DOCKER_CPU_LIMIT: 1.0
-      WORKER_API_KEY: ${WORKER_API_KEY:?Set WORKER_API_KEY in .env}
       # MUST equal the mount source below verbatim (not the backend's
       # in-container /app/uploads). docker_runner.py passes this path
       # straight to the Docker SDK as a bind-mount source for the

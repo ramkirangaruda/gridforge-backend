@@ -236,6 +236,20 @@ def delete_task_route(task_id: str, current_user: str = Depends(get_current_user
 
     logger.info(f"Task {task_id} deleted by {current_user}.")
 
+@router.get("/worker/ping", dependencies=[Depends(verify_worker_key)])
+def worker_ping():
+    """
+    Lets the worker confirm its WORKER_API_KEY actually matches the
+    backend's before it starts pulling tasks - see the startup check in
+    worker/main.py. A mismatch here would otherwise surface only as a
+    per-task-update HTTP error deep in the worker's own logs (api_client.py
+    logs and swallows it rather than raising), by which point the task has
+    already been popped off the Redis queue and its result silently
+    discarded - the backend never learns the task even ran.
+    """
+    return {"status": "ok"}
+
+
 @router.post("/task/{task_id}/update", response_model=Task, dependencies=[Depends(verify_worker_key)])
 def update_task_status(task_id: str, task_update: TaskUpdate):
     """
