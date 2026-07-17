@@ -112,15 +112,27 @@ export const uploadProject = async (file, onProgress) => {
     }
 };
 
-export const getTasks = async () => {
-    console.log("Fetching all tasks...");
+// GET /results now returns a page: { items, total, limit, offset }, not a
+// bare array - pass limit/offset through if you need a specific page.
+export const getTasks = async (limit = 20, offset = 0) => {
+    console.log("Fetching tasks...", { limit, offset });
     try {
-        const response = await apiClient.get('/results');
+        const response = await apiClient.get('/results', { params: { limit, offset } });
         console.log("getTasks response:", response.data);
         return response.data;
     } catch (error) {
         console.error("getTasks failed:", error.response?.data || error.message);
         throw new Error(error.response?.data?.detail || 'Failed to fetch tasks.');
+    }
+};
+
+export const deleteTask = async (taskId) => {
+    console.log(`Deleting task: ${taskId}...`);
+    try {
+        await apiClient.delete(`/task/${taskId}`);
+    } catch (error) {
+        console.error(`deleteTask ${taskId} failed:`, error.response?.data || error.message);
+        throw new Error(error.response?.data?.detail || `Failed to delete task ${taskId}.`);
     }
 };
 

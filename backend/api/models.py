@@ -38,6 +38,13 @@ class Task(TaskBase):
         from_attributes = True
 
 
+class PaginatedTasks(BaseModel):
+    items: list[Task]
+    total: int
+    limit: int
+    offset: int
+
+
 class UserCreate(BaseModel):
     username: str = Field(min_length=3, max_length=64)
     # bcrypt (backend/core/auth.py) silently truncates anything past 72

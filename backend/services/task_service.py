@@ -66,6 +66,27 @@ def get_all_tasks(owner: Optional[str] = None) -> List[Task]:
         return [Task.model_validate(t) for t in tasks]
 
 
+def get_paginated_tasks(owner: str, limit: int, offset: int) -> tuple[List[Task], int]:
+    """Like get_all_tasks, but bounded - backs GET /results. Kept separate
+    from get_all_tasks rather than adding optional limit/offset params to
+    it, since that function's other caller (the SSE snapshot in
+    stream_tasks()) intentionally wants everything, unpaginated.
+
+    Returns (page_of_tasks, total_matching_count) so the caller can tell
+    the client whether there's more to fetch.
+    """
+    with SessionLocal() as session:
+        base_query = session.query(TaskORM).filter(TaskORM.owner == owner)
+        total = base_query.count()
+        tasks = (
+            base_query.order_by(TaskORM.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+        return [Task.model_validate(t) for t in tasks], total
+
+
 def get_user_storage_usage(owner: str) -> int:
     """Total bytes across all of a user's existing tasks' uploaded zips -
     backs the per-user quota check in api/endpoints.py. Rows predating the
@@ -102,8 +123,20 @@ def update_task(task_id: str, task_update: TaskUpdate) -> Optional[Task]:
             elif task.status in (TaskStatus.COMPLETED.value, TaskStatus.FAILED.value):
                 if not task.completed_at:  # Only set completion time once
                     task.completed_at = datetime.utcnow()
+                    # Fallback only - if the worker reports its own
+                    # execution_time below (the normal case), that
+                    # overrides this. This wall-clock diff includes the
+                    # HTTP/DB round trip on top of actual container time,
+                    # so it's a worse number whenever a better one exists.
                     if task.started_at:
                         task.execution_time = (task.completed_at - task.started_at).total_seconds()
+
+        if "execution_time" in update_data and update_data["execution_time"] is not None:
+            # docker_runner.py measures this directly around the
+            # container's wait() call - authoritative over the
+            # started_at/completed_at fallback above whenever the caller
+            # actually sends it (the worker always does on completion).
+            task.execution_time = update_data["execution_time"]
 
         if "logs" in update_data:
             # Append logs instead of replacing

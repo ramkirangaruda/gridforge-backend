@@ -1,7 +1,7 @@
 import docker
 import time
 import logging
-from docker.errors import APIError, ImageNotFound, ContainerError
+from docker.errors import APIError, ImageNotFound, ContainerError, DockerException
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -14,20 +14,49 @@ def run_in_container(workspace_path: str):
     exit_code = -1
     execution_time = 0.0
     container = None
-    
+
+    # Split off client setup and the image check as their own steps, each
+    # with its own early return: neither happens "inside" a container, so
+    # there's nothing for the finally block below to retrieve logs from -
+    # without this, a failure here left `logs` empty and the user got
+    # exit_code=-1 with zero indication of what actually went wrong.
     try:
         logger.info("Initializing Docker client from environment.")
         client = docker.from_env(timeout=60)
         logger.info("Docker client initialized.")
+    except DockerException as e:
+        logger.error(f"Could not connect to the Docker daemon: {e}", exc_info=True)
+        return (
+            "[Worker Error] Docker is unavailable - could not connect to the "
+            "Docker daemon. This is a worker configuration problem, not an "
+            "issue with your project.",
+            -1,
+            0.0,
+        )
 
-        try:
-            logger.info(f"Checking for Docker image: {settings.DOCKER_IMAGE}")
-            client.images.get(settings.DOCKER_IMAGE)
-            logger.info(f"Docker image '{settings.DOCKER_IMAGE}' found.")
-        except ImageNotFound:
-            logger.error(f"Execution image '{settings.DOCKER_IMAGE}' not found. Please build it first using 'docker build -t {settings.DOCKER_IMAGE} worker/'.")
-            raise
+    try:
+        logger.info(f"Checking for Docker image: {settings.DOCKER_IMAGE}")
+        client.images.get(settings.DOCKER_IMAGE)
+        logger.info(f"Docker image '{settings.DOCKER_IMAGE}' found.")
+    except ImageNotFound:
+        logger.error(f"Execution image '{settings.DOCKER_IMAGE}' not found. Please build it first using 'docker build -t {settings.DOCKER_IMAGE} worker/'.")
+        return (
+            f"[Worker Error] Sandbox image '{settings.DOCKER_IMAGE}' is not "
+            f"built on this worker. This is a worker configuration problem, "
+            f"not an issue with your project.",
+            -1,
+            0.0,
+        )
+    except APIError as e:
+        logger.error(f"Docker API error while checking for the sandbox image: {e}", exc_info=True)
+        return (
+            f"[Worker Error] Docker is unavailable - could not check for the "
+            f"sandbox image ({e}).",
+            -1,
+            0.0,
+        )
 
+    try:
         command = [
             "/bin/sh",
             "-c",
@@ -68,10 +97,20 @@ def run_in_container(workspace_path: str):
         execution_time = time.time() - start_time if 'start_time' in locals() else 0
         logger.error(f"Docker API Error: {e}", exc_info=True)
         exit_code = -1
+        # container is still None here if client.containers.run() itself
+        # raised (e.g. invalid mount, resource limits rejected by the
+        # daemon) - same silent-empty-logs gap as the client-init/image
+        # checks above, just one step later. If a container DID get
+        # created and this happened during .wait() instead, it's non-None
+        # and the finally block below retrieves its real logs as usual.
+        if container is None:
+            logs = f"[Worker Error] Failed to start the sandbox container: {e}"
     except Exception as e:
         execution_time = time.time() - start_time if 'start_time' in locals() else 0
         logger.error(f"An unexpected error occurred with Docker: {e}", exc_info=True)
         exit_code = -1
+        if container is None:
+            logs = f"[Worker Error] Failed to start the sandbox container: {e}"
     finally:
         if container:
             try:

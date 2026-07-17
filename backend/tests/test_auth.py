@@ -55,5 +55,5 @@ def test_users_cannot_see_each_others_task_list(client):
     r_bob = client.get("/api/v1/results", headers={"Authorization": f"Bearer {bob_token}"})
     assert r_alice.status_code == 200
     assert r_bob.status_code == 200
-    assert r_alice.json() == []
-    assert r_bob.json() == []
+    assert r_alice.json() == {"items": [], "total": 0, "limit": 20, "offset": 0}
+    assert r_bob.json() == {"items": [], "total": 0, "limit": 20, "offset": 0}

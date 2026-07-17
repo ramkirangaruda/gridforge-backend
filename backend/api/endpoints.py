@@ -3,11 +3,11 @@ import logging
 import uuid
 import shutil
 import os
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordRequestForm
 
-from backend.api.models import Task, TaskUpdate, UserCreate, Token
+from backend.api.models import PaginatedTasks, Task, TaskUpdate, UserCreate, Token
 from backend.services import task_service, redis_service, user_service
 from backend.core.config import settings
 from backend.core.auth import get_current_user, get_current_user_sse, verify_worker_key, create_access_token
@@ -16,6 +16,9 @@ import re
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+DEFAULT_RESULTS_LIMIT = 20
+MAX_RESULTS_LIMIT = 100
 
 def secure_filename(filename: str) -> str:
     """A basic version of Werkzeug's secure_filename."""
@@ -189,12 +192,49 @@ def get_task_status(task_id: str, current_user: str = Depends(get_current_user))
         raise HTTPException(status_code=404, detail="Task not found")
     return task
 
-@router.get("/results", response_model=list[Task])
-def get_all_tasks(current_user: str = Depends(get_current_user)):
+@router.get("/results", response_model=PaginatedTasks)
+def get_all_tasks(
+    current_user: str = Depends(get_current_user),
+    limit: int = Query(DEFAULT_RESULTS_LIMIT, ge=1, le=MAX_RESULTS_LIMIT),
+    offset: int = Query(0, ge=0),
+):
     """
-    Returns the authenticated user's tasks, sorted by creation date.
+    Returns a page of the authenticated user's tasks, newest first.
+    `limit` defaults to 20 and is capped at 100 - FastAPI's Query
+    validation rejects anything outside [1, 100] with a 422 rather than
+    silently clamping it, so a caller asking for too much finds out why.
     """
-    return task_service.get_all_tasks(owner=current_user)
+    items, total = task_service.get_paginated_tasks(current_user, limit=limit, offset=offset)
+    return PaginatedTasks(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.delete("/task/{task_id}", status_code=204)
+def delete_task_route(task_id: str, current_user: str = Depends(get_current_user)):
+    """
+    Deletes a task and its uploaded project files, if it belongs to the
+    authenticated user. Same 404-for-both pattern as GET /task/{id}: a
+    task that doesn't exist and one that isn't yours look identical from
+    the outside.
+    """
+    task = task_service.get_task(task_id)
+    if not task or task.owner != current_user:
+        logger.warning(f"Delete attempted on task {task_id}, not found or not owned by {current_user}.")
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # task_service.delete_task() returning False here doesn't distinguish
+    # "vanished between the check above and now" (e.g. a double-click, or
+    # another request deleting it concurrently - arguably fine, the task
+    # is gone either way) from "the DB row was removed but the upload
+    # directory failed to delete from disk" (a real partial failure). Not
+    # resolving that ambiguity here - it's a pre-existing gap in
+    # delete_task()'s return contract, not something this route
+    # introduces, and the common case (a user clicking delete on their
+    # own task once) is unaffected either way.
+    if not task_service.delete_task(task_id):
+        logger.error(f"delete_task() reported failure for task {task_id} after ownership check passed.")
+        raise HTTPException(status_code=500, detail="Failed to fully delete task.")
+
+    logger.info(f"Task {task_id} deleted by {current_user}.")
 
 @router.post("/task/{task_id}/update", response_model=Task, dependencies=[Depends(verify_worker_key)])
 def update_task_status(task_id: str, task_update: TaskUpdate):

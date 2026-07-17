@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { getTaskStreamUrl } from "./api";
+import { getTaskStreamUrl, deleteTask } from "./api";
 import { motion, AnimatePresence } from "framer-motion";
 
 const statusColors = {
@@ -9,13 +9,33 @@ const statusColors = {
     failed: "bg-red-500/20 text-red-300 border-red-500/30",
 };
 
-const TaskCard = ({ task }) => {
+const TaskCard = ({ task, onDelete }) => {
     const statusClass = statusColors[task.status] || "bg-gray-500/20 text-gray-300 border-gray-500/30";
     const [isExpanded, setIsExpanded] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
 
     const formatTime = (isoString) => {
         if (!isoString) return "N/A";
         return new Date(isoString).toLocaleString();
+    };
+
+    const handleDeleteClick = async (e) => {
+        // Without this the click would also bubble to the card's own
+        // onClick below and toggle the log panel open/closed at the same
+        // time as the confirm dialog appears.
+        e.stopPropagation();
+        if (!window.confirm(`Delete task "${task.filename}"? This also removes its uploaded project files and can't be undone.`)) {
+            return;
+        }
+        setIsDeleting(true);
+        try {
+            await onDelete(task.id);
+        } catch (err) {
+            // onDelete (Dashboard's handleDelete) already surfaces the
+            // error via the shared error banner - just stop showing this
+            // card as mid-delete so the button becomes clickable again.
+            setIsDeleting(false);
+        }
     };
 
     return (
@@ -36,8 +56,18 @@ const TaskCard = ({ task }) => {
                     </span>
                     <span className="text-sm text-gray-400">{task.filename}</span>
                 </div>
-                <div className="text-xs text-gray-400 font-mono break-all text-right">
-                    {task.id}
+                <div className="flex items-center gap-3">
+                    <div className="text-xs text-gray-400 font-mono break-all text-right">
+                        {task.id}
+                    </div>
+                    <button
+                        onClick={handleDeleteClick}
+                        disabled={isDeleting}
+                        title="Delete task"
+                        className="text-gray-500 hover:text-red-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-lg leading-none px-1"
+                    >
+                        {isDeleting ? "..." : "✕"}
+                    </button>
                 </div>
             </div>
 
@@ -89,6 +119,24 @@ function Dashboard({ tasks, setTasks }) {
         });
     };
 
+    // No SSE event exists for deletions (only status/log updates get
+    // pushed), so this optimistically drops the task from local state on
+    // a successful API call rather than waiting for a server push that
+    // will never arrive. Other open tabs/sessions won't see the removal
+    // until they reload - acceptable for a single-user dashboard like
+    // this one, but worth knowing if this pattern gets reused somewhere
+    // multi-session.
+    const handleDelete = async (taskId) => {
+        try {
+            await deleteTask(taskId);
+            setTasks((prevTasks) => prevTasks.filter((t) => t.id !== taskId));
+            setError(null);
+        } catch (err) {
+            setError(err.message || "Failed to delete task.");
+            throw err; // let the TaskCard know so it can stop its own spinner
+        }
+    };
+
     useEffect(() => {
         const streamUrl = getTaskStreamUrl();
         if (!streamUrl) {
@@ -129,7 +177,7 @@ function Dashboard({ tasks, setTasks }) {
             <AnimatePresence>
                 {tasks.length > 0 ? (
                     tasks.map((task) => (
-                        <TaskCard key={task.id} task={task} />
+                        <TaskCard key={task.id} task={task} onDelete={handleDelete} />
                     ))
                 ) : (
                     <div className="text-center py-10 text-gray-500">
