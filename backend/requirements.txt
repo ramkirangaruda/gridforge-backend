@@ -1,0 +1,17 @@
+fastapi==0.136.1
+uvicorn==0.47.0
+python-multipart==0.0.29
+sqlalchemy==2.0.51
+pyjwt==2.13.0
+bcrypt==5.0.0
+slowapi==0.1.10
+
+# Shared with worker/requirements.txt - redis (queue/pubsub client),
+# pydantic/pydantic-settings (also used by shared/config.py, which both
+# services' Settings classes inherit from), and python-dotenv (no direct
+# import anywhere, but pydantic-settings' env_file=".env" loading depends
+# on it being installed).
+redis==7.4.0
+pydantic==2.13.4
+pydantic-settings==2.14.1
+python-dotenv==1.2.2

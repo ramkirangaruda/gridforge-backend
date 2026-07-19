@@ -1,0 +1,9 @@
+docker==7.1.0
+requests==2.34.2
+
+# Shared with backend/requirements.txt - see the comment there for why
+# each of these is needed by both services.
+redis==7.4.0
+pydantic==2.13.4
+pydantic-settings==2.14.1
+python-dotenv==1.2.2

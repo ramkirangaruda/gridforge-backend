@@ -5,14 +5,14 @@
 # per-task via the Docker SDK - that one never runs as a long-lived
 # service, see docker-compose.yml's `gridforge-exec-image` service.
 #
-# Build context is the REPO ROOT, same reasoning as backend/Dockerfile
-# (requirements.txt lives there). worker/main.py uses *unqualified*
-# imports (`from config import settings`), so it must run with
-# worker/ itself as the working directory, not as a `worker.*` package.
+# Build context is the REPO ROOT, same reasoning as backend/Dockerfile.
+# worker/main.py uses *unqualified* imports (`from config import
+# settings`), so it must run with worker/ itself as the working
+# directory, not as a `worker.*` package.
 FROM python:3.11-slim
 
 WORKDIR /app
-COPY requirements.txt .
+COPY worker/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY shared/ /app/shared/

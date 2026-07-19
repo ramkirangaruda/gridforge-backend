@@ -96,3 +96,18 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 @app.get("/")
 def read_root():
     return {"message": "Welcome to GridForge API"}
+
+
+@app.get("/health")
+def health():
+    """
+    Used by docker-compose's healthcheck (see the backend service there)
+    to gate worker's `depends_on: condition: service_healthy` - the
+    container-started signal that condition replaces only confirms the
+    process launched, not that uvicorn is actually accepting connections
+    yet. Deliberately just confirms the ASGI app itself is up and routing
+    - no DB/Redis check here, so a brief Redis blip doesn't also flip the
+    backend container to "unhealthy" and potentially get it restarted for
+    an unrelated dependency's problem.
+    """
+    return {"status": "ok"}

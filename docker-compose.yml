@@ -20,6 +20,27 @@ x-shared-env: &shared-env
   REDIS_QUEUE_NAME: gridforge_tasks
   WORKER_API_KEY: ${WORKER_API_KEY:?Set WORKER_API_KEY in .env}
 
+# Memory/CPU ceilings for the always-on services, sized for a small VM
+# (1-2 vCPU, 1-2GB RAM - e.g. a Hetzner CX22 or DO Basic droplet). These
+# are LIMITS, not reservations: Docker enforces memory limits as a hard
+# cap (exceeding it gets the container OOM-killed, so these must actually
+# fit in physical RAM), but CPU limits are just a ceiling on how much of
+# a core a container can use when it wants more, not a guarantee - it's
+# fine (and normal) for CPU limits across containers to sum to more than
+# the host's core count, since they only bite under real contention.
+#
+# Math worth knowing: redis + backend + worker limits below total 896MB.
+# The worker ALSO spawns a separate sandbox container per task with its
+# own 512MB limit (DOCKER_MEM_LIMIT below) - so one task running
+# concurrently with the three base services at their ceiling is ~1.4GB,
+# plus OS/dockerd overhead. That does NOT comfortably fit a 1GB box; it
+# does fit a 2GB one with some room to spare. On a strict 1GB VM, lower
+# DOCKER_MEM_LIMIT (currently 512m) and/or the limits below before
+# relying on this in production.
+x-small-limits: &small-limits
+  memory: 384M
+  cpus: "0.5"
+
 services:
   redis:
     image: redis:7-alpine
@@ -30,6 +51,14 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          # Redis itself is lightweight here - it's only ever holding a
+          # handful of task IDs in a list plus a few pub/sub subscribers,
+          # nowhere near what would need 384M.
+          memory: 128M
+          cpus: "0.5"
     restart: unless-stopped
 
   # Builds and tags the gridforge-exec:latest sandbox image from
@@ -61,6 +90,20 @@ services:
       JWT_EXPIRE_MINUTES: 60
     volumes:
       - ${HOST_UPLOADS_DIR:?Set HOST_UPLOADS_DIR in .env to the absolute host path of ./uploads}:/app/uploads
+    healthcheck:
+      # No curl/wget in python:3.11-slim, so this uses the stdlib instead
+      # of adding an apt package just for a healthcheck. An unreachable/
+      # non-200 /health raises inside this script, which is exactly the
+      # nonzero exit Docker wants to see for "unhealthy" - no explicit
+      # try/except needed.
+      test: ["CMD", "python", "-c", "import urllib.request as u,sys; sys.exit(0 if u.urlopen('http://localhost:8000/health', timeout=3).status == 200 else 1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits: *small-limits
     depends_on:
       redis:
         condition: service_healthy
@@ -96,11 +139,25 @@ services:
       # alternative (routing through docker-socket-proxy instead of
       # mounting the raw socket).
       - /var/run/docker.sock:/var/run/docker.sock
+    deploy:
+      resources:
+        # Only the worker PROCESS itself, not the sandbox containers it
+        # spawns - those get their own separate limits below
+        # (DOCKER_MEM_LIMIT/DOCKER_CPU_LIMIT), enforced by docker_runner.py
+        # on each task container individually. The worker process itself
+        # just polls Redis and makes HTTP/Docker-SDK calls - it doesn't
+        # need much.
+        limits: *small-limits
     depends_on:
       redis:
         condition: service_healthy
       backend:
-        condition: service_started
+        # service_started only confirms the container process launched,
+        # not that uvicorn is actually accepting connections - worker's
+        # first requests could otherwise race a backend that's still
+        # importing modules/initializing the DB. service_healthy waits
+        # for backend's own healthcheck above (GET /health) to pass first.
+        condition: service_healthy
       gridforge-exec-image:
         condition: service_completed_successfully
     restart: unless-stopped
