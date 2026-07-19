@@ -135,15 +135,3 @@ export const deleteTask = async (taskId) => {
         throw new Error(error.response?.data?.detail || `Failed to delete task ${taskId}.`);
     }
 };
-
-export const getTask = async (taskId) => {
-    console.log(`Fetching task: ${taskId}...`);
-    try {
-        const response = await apiClient.get(`/task/${taskId}`);
-        console.log(`getTask ${taskId} response:`, response.data);
-        return response.data;
-    } catch (error) {
-        console.error(`getTask ${taskId} failed:`, error.response?.data || error.message);
-        throw new Error(error.response?.data?.detail || `Failed to fetch task ${taskId}.`);
-    }
-};

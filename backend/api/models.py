@@ -13,9 +13,6 @@ class TaskStatus(str, Enum):
 class TaskBase(BaseModel):
     filename: str
     status: TaskStatus = TaskStatus.QUEUED
-    
-class TaskCreate(TaskBase):
-    pass
 
 class TaskUpdate(BaseModel):
     status: Optional[TaskStatus] = None

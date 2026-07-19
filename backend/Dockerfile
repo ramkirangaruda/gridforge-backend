@@ -12,6 +12,26 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY shared/ ./shared/
 COPY backend/ ./backend/
 
+# Non-root user for the actual FastAPI process - unlike worker/Dockerfile.worker,
+# nothing here needs elevated host access, so there's no excuse for root.
+#
+# One thing this alone does NOT solve: /app/uploads is a bind mount from
+# the host (docker-compose.yml's HOST_UPLOADS_DIR), and both the SQLite
+# DB file and every uploaded project.zip live there - this user needs
+# WRITE access to it. Docker doesn't remap bind-mount ownership to match
+# a container user automatically, so `chown -R appuser:appuser /app`
+# below only affects the image's own layers, not whatever gets mounted
+# over /app/uploads at container start. On the host, either:
+#   chmod -R a+rwX <HOST_UPLOADS_DIR>          (simplest, fine for a
+#                                                single-tenant deployment)
+# or, on a host you don't fully trust with world-writable data:
+#   docker compose exec backend id -u          (find this user's UID)
+#   chown -R <that UID> <HOST_UPLOADS_DIR>     (match it specifically)
+RUN groupadd -r appuser \
+    && useradd -r -g appuser -d /home/appuser -s /sbin/nologin -c "Application User" appuser \
+    && chown -R appuser:appuser /app
+USER appuser
+
 EXPOSE 8000
 
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

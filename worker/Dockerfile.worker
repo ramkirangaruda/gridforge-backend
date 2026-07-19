@@ -15,8 +15,21 @@ WORKDIR /app
 COPY worker/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# gosu: lets the entrypoint drop from root to appuser cleanly (exec's
+# directly, preserves environment/signal handling) after granting socket
+# group access - see docker-entrypoint.sh for the full explanation of why
+# this process starts as root at all.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gosu \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -r appuser \
+    && useradd -r -g appuser -d /home/appuser -s /sbin/nologin -c "Application User" appuser
+
 COPY shared/ /app/shared/
 COPY worker/ /app/worker/
+COPY worker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 WORKDIR /app/worker
 
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["python", "main.py"]
