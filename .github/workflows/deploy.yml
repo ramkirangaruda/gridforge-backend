@@ -1,0 +1,33 @@
+name: Deploy
+
+# Fires only after the CI workflow finishes on main, and only if it
+# actually passed - deliberately not a plain `on: push`, since that would
+# happily SSH in and deploy code that fails lint/tests. The `name:` here
+# must keep matching CI's `name: CI` in ci.yml for this trigger to fire.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Deploy to VM
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: SSH in, pull, and rebuild
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          script: |
+            set -e
+            cd /opt/gridforge
+            # Public repo, so this needs no credentials on the VM side -
+            # only the SSH key above, to get onto the VM at all.
+            git fetch origin main
+            git reset --hard origin/main
+            ./deploy.sh

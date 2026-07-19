@@ -1,0 +1,6 @@
+# Shell scripts run on Linux (the VM, containers) regardless of what OS
+# they're edited on - force LF so a Windows contributor with
+# core.autocrlf=true can't silently commit CRLF line endings that break
+# a script's shebang on the actual deploy target (`bad interpreter:
+# /bin/bash^M`, the classic symptom).
+*.sh text eol=lf
