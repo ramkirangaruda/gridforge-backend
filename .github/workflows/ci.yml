@@ -75,7 +75,7 @@ jobs:
         run: pytest -v
 
   frontend:
-    name: frontend (lint + test)
+    name: frontend (lint + test + build)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -96,5 +96,18 @@ jobs:
       - name: Test (jest via react-scripts)
         working-directory: frontend
         run: npm test -- --watchAll=false
+        env:
+          CI: true
+
+      # `lint` and `test` alone missed a real bug: CRA's build treats
+      # ESLint warnings as hard errors when CI=true (which Vercel, and
+      # most CI/CD platforms, set automatically) - a plain react-hooks
+      # warning that `npm run lint` and Jest both consider harmless can
+      # still fail `npm run build` outright. Caught this the hard way by
+      # actually running a production build locally; this step is what
+      # makes sure it can't silently regress again.
+      - name: Build (production bundle)
+        working-directory: frontend
+        run: npm run build
         env:
           CI: true

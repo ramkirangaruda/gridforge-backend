@@ -68,13 +68,24 @@ def process_task(task_id: str):
     The main task processing logic.
     """
     logger.info(f"Processing task: {task_id}")
-    
-    try:
-        update_task_status(task_id, "running")
-    except Exception as e:
-        logger.error(f"Failed to update task {task_id} to 'running' status. Aborting. Error: {e}")
-        # We can't proceed if we can't even update the status.
-        return
+
+    # update_task_status() (api_client.py) never actually raises - every
+    # requests exception it can hit is caught internally and turned into a
+    # `return None`. A try/except here was dead code: it read as "abort if
+    # we can't mark this task running", but that abort could never fire,
+    # so the task was always processed regardless, just silently, with no
+    # log distinguishing "confirmed running" from "backend didn't hear
+    # about it". Checking the return value directly says what actually
+    # happens: log it and continue anyway, since aborting outright on a
+    # possibly-transient failure to report an *intermediate* status is
+    # worse than proceeding and hoping the FINAL update below succeeds -
+    # that's the one that actually matters for the user to see a result.
+    if update_task_status(task_id, "running") is None:
+        logger.warning(
+            f"Could not confirm 'running' status for task {task_id} with "
+            f"the backend (it may be temporarily unreachable). Proceeding "
+            f"with the task anyway."
+        )
 
     task_workspace = settings.WORKSPACES_DIR / task_id
     zip_path = task_workspace / "project.zip"

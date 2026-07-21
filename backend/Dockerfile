@@ -34,4 +34,20 @@ USER appuser
 
 EXPOSE 8000
 
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --proxy-headers: without this, Starlette's request.client.host - what
+# backend/core/rate_limit.py's Limiter keys on - is always Caddy's own
+# container IP in production, not the real client's. Every user behind
+# the proxy would then share ONE 5/minute bucket on /auth/login and
+# /auth/register, making the rate limit either useless (effectively
+# unlimited once averaged across real users) or actively harmful (one
+# user's failed logins lock everyone else out). This flag makes uvicorn
+# trust X-Forwarded-For and rewrite request.client accordingly.
+#
+# --forwarded-allow-ips='*': safe specifically because this backend has
+# NO direct public exposure in production - docker-compose.prod.yml's
+# `ports: !reset []` on this service means Caddy is the only thing that
+# can reach it at all, over the internal compose network. If that ever
+# changes (backend gets a public port again), this needs to become an
+# actual allow-list instead, or a spoofed X-Forwarded-For could bypass
+# the rate limit entirely.
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]

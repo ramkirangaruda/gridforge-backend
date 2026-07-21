@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { getTaskStreamUrl, deleteTask } from "./api";
+import { getTaskStreamUrl, deleteTask, isAuthenticated, AUTH_EXPIRED_EVENT } from "./api";
 import { motion, AnimatePresence } from "framer-motion";
 
 const statusColors = {
@@ -104,21 +104,6 @@ const TaskCard = ({ task, onDelete }) => {
 function Dashboard({ tasks, setTasks }) {
     const [error, setError] = useState(null);
 
-    // Merges a single pushed task_update into the existing list, replacing
-    // the matching task in place (or prepending it if we somehow haven't
-    // seen it yet - e.g. a submit-project response raced the snapshot).
-    const applyTaskUpdate = (updatedTask) => {
-        setTasks((prevTasks) => {
-            const index = prevTasks.findIndex((t) => t.id === updatedTask.id);
-            if (index === -1) {
-                return [updatedTask, ...prevTasks];
-            }
-            const next = [...prevTasks];
-            next[index] = updatedTask;
-            return next;
-        });
-    };
-
     // No SSE event exists for deletions (only status/log updates get
     // pushed), so this optimistically drops the task from local state on
     // a successful API call rather than waiting for a server push that
@@ -146,6 +131,26 @@ function Dashboard({ tasks, setTasks }) {
 
         const eventSource = new EventSource(streamUrl);
 
+        // Merges a single pushed task_update into the existing list,
+        // replacing the matching task in place (or prepending it if we
+        // somehow haven't seen it yet - e.g. a submit-project response
+        // raced the snapshot). Declared inside the effect, not the
+        // component body: it's only ever called from the listener right
+        // below, and keeping it here means there's no outer reference for
+        // the effect's dependency array to need to track - setTasks itself
+        // is the only true external dependency, and it's already listed.
+        const applyTaskUpdate = (updatedTask) => {
+            setTasks((prevTasks) => {
+                const index = prevTasks.findIndex((t) => t.id === updatedTask.id);
+                if (index === -1) {
+                    return [updatedTask, ...prevTasks];
+                }
+                const next = [...prevTasks];
+                next[index] = updatedTask;
+                return next;
+            });
+        };
+
         // Initial full list of the user's tasks, sent once when the
         // connection opens - replaces the old first `getTasks()` poll.
         eventSource.addEventListener("snapshot", (event) => {
@@ -161,9 +166,21 @@ function Dashboard({ tasks, setTasks }) {
         });
 
         eventSource.onerror = () => {
-            // EventSource retries the connection automatically; this just
-            // surfaces that we're currently disconnected.
             console.error("Task stream connection error.");
+            // EventSource's error event carries no HTTP status - the
+            // browser can't tell us whether this was a 401 (expired
+            // token) or a network blip, and it retries automatically
+            // either way. isAuthenticated() can tell the difference for
+            // real, though: it decodes the stored JWT's own exp claim,
+            // so this is only true if the token has actually expired,
+            // not a guess based on "an error happened, might be auth."
+            if (!isAuthenticated()) {
+                eventSource.close();
+                window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+                return;
+            }
+            // Otherwise this is a real (probably transient) connection
+            // problem - EventSource keeps retrying on its own.
             setError("Live updates disconnected. Reconnecting...");
         };
 
