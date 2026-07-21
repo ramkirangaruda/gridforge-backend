@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_RESULTS_LIMIT = 20
 MAX_RESULTS_LIMIT = 100
+# A bit more generous than DEFAULT_RESULTS_LIMIT deliberately - the SSE
+# snapshot has no "load more" affordance the way /results could grow one,
+# so erring toward showing more up front avoids "where did my task go"
+# confusion for anyone with a longer history than the REST default page.
+SSE_SNAPSHOT_LIMIT = 50
 
 def secure_filename(filename: str) -> str:
     """A basic version of Werkzeug's secure_filename."""
@@ -272,13 +277,15 @@ async def stream_tasks(request: Request, current_user: str = Depends(get_current
     """
     Server-Sent Events stream of the authenticated user's task updates.
     Replaces the frontend's old 2s-polling loop against /results: an
-    initial `snapshot` event carries the user's current tasks, then a
-    `task_update` event fires each time the worker posts a status change
-    for one of their tasks (pushed via Redis pub/sub - see
-    update_task_status above and redis_service.publish_task_update).
+    initial `snapshot` event carries the user's most recent tasks (capped
+    at SSE_SNAPSHOT_LIMIT - this used to fetch the user's entire task
+    history unbounded on every connect/reconnect), then a `task_update`
+    event fires each time the worker posts a status change for one of
+    their tasks (pushed via Redis pub/sub - see update_task_status above
+    and redis_service.publish_task_update).
     """
     async def event_generator():
-        tasks = task_service.get_all_tasks(owner=current_user)
+        tasks, _ = task_service.get_paginated_tasks(current_user, limit=SSE_SNAPSHOT_LIMIT, offset=0)
         yield f"event: snapshot\ndata: {json.dumps([t.model_dump(mode='json') for t in tasks])}\n\n"
 
         pubsub = await redis_service.subscribe_to_user_updates(current_user)
